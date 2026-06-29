@@ -11,30 +11,69 @@ Required coverage:
   4. Every non-/metrics response has an X-Request-ID response header that is non-empty.
 """
 
+import re
 import pytest
+from fastapi.testclient import TestClient
+from app import app
+
+client = TestClient(app)
 
 
 def test_metrics_endpoint_returns_200_after_traffic():
     """GET /metrics returns 200 after 3 calls to /echo and 2 calls to /sum."""
-    # TODO: import app from your module, use FastAPI's TestClient to issue the
-    # 5 calls, then GET /metrics and assert status_code == 200.
-    pytest.fail("Not implemented -- write your test here")
+    # Issue 3 calls to POST /echo
+    for i in range(3):
+        res = client.post("/echo", json={"message": f"traffic-{i}"})
+        assert res.status_code == 200
+
+    # Issue 2 calls to GET /sum
+    for i in range(2):
+        res = client.get("/sum", params={"a": i, "b": 10})
+        assert res.status_code == 200
+
+    # GET /metrics (Starlette routes mounted apps with a trailing slash)
+    metrics_res = client.get("/metrics/")
+    assert metrics_res.status_code == 200
 
 
 def test_metrics_body_contains_three_metric_families():
     """The /metrics body contains requests_total, request_latency_seconds, inflight_requests."""
-    # TODO: GET /metrics and assert all three metric names are substrings of resp.text.
-    pytest.fail("Not implemented -- write your test here")
+    metrics_res = client.get("/metrics/")
+    body = metrics_res.text
+
+    assert "requests_total" in body
+    assert "request_latency_seconds" in body
+    assert "inflight_requests" in body
 
 
 def test_echo_counter_has_expected_value():
     """After 3 calls to /echo, requests_total{path="/echo",status="200"} >= 3."""
-    # TODO: issue 3 POST /echo calls, GET /metrics, parse with a regex, assert >= 3.
-    pytest.fail("Not implemented -- write your test here")
+    # Ensure traffic is present
+    for i in range(3):
+        client.post("/echo", json={"message": "counter-check"})
+
+    metrics_res = client.get("/metrics/")
+    body = metrics_res.text
+
+    # Match the standard Prometheus text exposition format for counters
+    # e.g., requests_total_total{path="/echo",status="200"} 3.0
+    pattern = r'requests_total_total\{path="/echo",status="200"\}\s+(\d+\.\d+)'
+    match = re.search(pattern, body)
+    
+    assert match is not None, "Metric line matching echo and 200 status not found."
+    
+    value = float(match.group(1))
+    assert value >= 3.0
 
 
 def test_x_request_id_header_set_on_every_non_metrics_response():
     """Every non-/metrics response carries a non-empty X-Request-ID header."""
-    # TODO: call /echo and /sum, assert response.headers["X-Request-ID"] is set
-    # and non-empty for each.
-    pytest.fail("Not implemented -- write your test here")
+    # Check POST /echo
+    res_echo = client.post("/echo", json={"message": "header test"})
+    assert "X-Request-ID" in res_echo.headers
+    assert res_echo.headers["X-Request-ID"] != ""
+
+    # Check GET /sum
+    res_sum = client.get("/sum", params={"a": 5, "b": 5})
+    assert "X-Request-ID" in res_sum.headers
+    assert res_sum.headers["X-Request-ID"] != ""
